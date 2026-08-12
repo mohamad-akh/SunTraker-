@@ -3,38 +3,62 @@ import numpy as np
 import sys
 import os
 
+INSPECTOR_WIN_NAME = "Pixel Inspector"
+
+def imread_unicode(filepath, flags=cv2.IMREAD_COLOR):
+    """
+    تابع جایگزین برای cv2.imread جهت پشتیبانی کامل از حروف فارسی و Unicode در مسیر فایل
+    """
+    try:
+        # خواندن فایل به‌صورت آرایه بایت‌های خام
+        img_array = np.fromfile(filepath, dtype=np.uint8)
+        # دکود کردن بایت‌ها به تصویر OpenCV
+        return cv2.imdecode(img_array, flags)
+    except Exception as e:
+        return None
+
+def create_pixel_inspector_panel(r, g, b, h, s, v, l, a, b_lab, x, y):
+    panel_w, panel_h = 400, 320
+    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+    
+    color_preview = np.full((60, panel_w - 20, 3), (b, g, r), dtype=np.uint8)
+    panel[15:75, 10:panel_w-10] = color_preview
+    
+    cv2.rectangle(panel, (10, 15), (panel_w - 10, 75), (200, 200, 200), 1)
+    
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(panel, f"Position: X={x}, Y={y}", (15, 100), font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"RGB:  R={r:3d}  G={g:3d}  B={b:3d}", (15, 140), font, 0.5, (100, 100, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"HSV:  H={h:3d}  S={s:3d}  V={v:3d}", (15, 180), font, 0.5, (255, 200, 100), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"LAB:  L={l:3d}  a={a:3d}  b={b_lab:3d}", (15, 220), font, 0.5, (255, 100, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, "Move/Click mouse on main image", (15, 280), font, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+    
+    return panel
 
 def process_single_frame(frame, title_prefix=""):
-    # استخراج کانال‌های BGR (توجه: OpenCV به‌صورت BGR خوانده می‌شود)
     b_chan, g_chan, r_chan = cv2.split(frame)
 
-    # تبدیل به HSV و LAB
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     h_chan, s_chan, v_chan = cv2.split(hsv)
 
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l_chan, a_chan, b_lab_chan = cv2.split(lab)
 
-    # تعریف تمامی کانال‌ها به همراه رنگ متناظر جهت نمایش در پنل (BGR)
     channels = {
-        # RGB Channels
-        "Red (R)": (r_chan, (0, 0, 255)),          # قرمز
-        "Green (G)": (g_chan, (0, 255, 0)),        # سبز
-        "Blue (B)": (b_chan, (255, 0, 0)),         # آبی
-        # HSV
-        "Hue (H)": (h_chan, (255, 100, 0)),        # آبی‌فیروزه‌ای
-        "Sat (S)": (s_chan, (0, 255, 128)),        # سبز روشن
-        "Val (V)": (v_chan, (128, 0, 255)),        # بنفش‌قرمز
-        # LAB
-        "Light (L)": (l_chan, (255, 255, 0)),      # فیروزه‌ای
-        "a* (G-R)": (a_chan, (255, 0, 255)),       # ارغوانی
-        "b* (B-Y)": (b_lab_chan, (0, 255, 255))    # زرد
+        "Red (R)": (r_chan, (0, 0, 255)),
+        "Green (G)": (g_chan, (0, 255, 0)),
+        "Blue (B)": (b_chan, (255, 0, 0)),
+        "Hue (H)": (h_chan, (255, 100, 0)),
+        "Sat (S)": (s_chan, (0, 255, 128)),
+        "Val (V)": (v_chan, (128, 0, 255)),
+        "Light (L)": (l_chan, (255, 255, 0)),
+        "a* (G-R)": (a_chan, (255, 0, 255)),
+        "b* (B-Y)": (b_lab_chan, (0, 255, 255))
     }
 
     marked_frame = frame.copy()
     h, w = frame.shape[:2]
 
-    # پنل مشکی در سمت راست تصویر
     panel_width = 380
     info_panel = np.zeros((h, panel_width, 3), dtype=np.uint8)
 
@@ -45,7 +69,6 @@ def process_single_frame(frame, title_prefix=""):
     y_offset = 25
     line_height = 20
 
-    # تیتر پنل
     cv2.putText(info_panel, "Channel Min / Max Stats", (10, y_offset),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
     y_offset += line_height + 5
@@ -53,18 +76,13 @@ def process_single_frame(frame, title_prefix=""):
     for name, (channel, color) in channels.items():
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(channel)
 
-        # چاپ در ترمینال
         print(f"🔹 [{name}]")
-        print(
-            f"   ▫️ حداقل (Min): {int(min_val):3d}  در  X={min_loc[0]}, Y={min_loc[1]}")
-        print(
-            f"   ▫️ حداکثر (Max): {int(max_val):3d}  در  X={max_loc[0]}, Y={max_loc[1]}")
+        print(f"   ▫️ حداقل (Min): {int(min_val):3d}  در  X={min_loc[0]}, Y={min_loc[1]}")
+        print(f"   ▫️ حداکثر (Max): {int(max_val):3d}  در  X={max_loc[0]}, Y={max_loc[1]}")
 
-        # رسم نقاط روی تصویر (نقطه کوچکتر برای Min، بزرگتر برای Max)
         cv2.circle(marked_frame, min_loc, 2, color, -1)
         cv2.circle(marked_frame, max_loc, 4, color, -1)
 
-        # متن مقادیر جهت نمایش در پنل
         text_min = f"{name} Min: {int(min_val):3d} @ ({min_loc[0]},{min_loc[1]})"
         text_max = f"{name} Max: {int(max_val):3d} @ ({max_loc[0]},{max_loc[1]})"
 
@@ -78,28 +96,40 @@ def process_single_frame(frame, title_prefix=""):
 
     print("=" * 65)
 
-    # اتصال پنل اطلاعات به سمت راست تصویر اصلی
     combined_display = np.hstack((marked_frame, info_panel))
-
     win_name = "Marked Image with Stats Panel"
+    
     cv2.imshow(win_name, combined_display)
 
-    # ثبت کلیک موس
-    def click_event(event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if x < w:
-                b_val, g_val, r_val = frame[y, x]
-                h_val, s_val, v_val = h_chan[y, x], s_chan[y, x], v_chan[y, x]
-                l_val, a_val, b_l_val = l_chan[y,
-                                               x], a_chan[y, x], b_lab_chan[y, x]
+    init_x, init_y = w // 2, h // 2
+    b_val, g_val, r_val = frame[init_y, init_x]
+    inspector_img = create_pixel_inspector_panel(
+        r_val, g_val, b_val, 
+        h_chan[init_y, init_x], s_chan[init_y, init_x], v_chan[init_y, init_x],
+        l_chan[init_y, init_x], a_chan[init_y, init_x], b_lab_chan[init_y, init_x],
+        init_x, init_y
+    )
+    cv2.imshow(INSPECTOR_WIN_NAME, inspector_img)
 
-                print(f"📍 کلیک در (X={x:4d}, Y={y:4d}) | "
-                      f"RGB: (R={r_val:3d}, G={g_val:3d}, B={b_val:3d}) | "
-                      f"HSV: (H={h_val:3d}, S={s_val:3d}, V={v_val:3d}) | "
-                      f"LAB: (L={l_val:3d}, a={a_val:3d}, b={b_l_val:3d})")
+    def mouse_event(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN or event == cv2.EVENT_MOUSEMOVE:
+            if x < w and y < h:
+                b_v, g_v, r_v = frame[y, x]
+                h_v, s_v, v_v = h_chan[y, x], s_chan[y, x], v_chan[y, x]
+                l_v, a_v, b_l_v = l_chan[y, x], a_chan[y, x], b_lab_chan[y, x]
 
-    cv2.setMouseCallback(win_name, click_event)
+                updated_inspector = create_pixel_inspector_panel(
+                    r_v, g_v, b_v, h_v, s_v, v_v, l_v, a_v, b_l_v, x, y
+                )
+                cv2.imshow(INSPECTOR_WIN_NAME, updated_inspector)
 
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    print(f"📍 کلیک در (X={x:4d}, Y={y:4d}) | "
+                          f"RGB: ({r_v:3d}, {g_v:3d}, {b_v:3d}) | "
+                          f"HSV: ({h_v:3d}, {s_v:3d}, {v_v:3d}) | "
+                          f"LAB: ({l_v:3d}, {a_v:3d}, {b_l_v:3d})")
+
+    cv2.setMouseCallback(win_name, mouse_event)
 
 def inspect_images_in_folder(input_path):
     valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')
@@ -118,13 +148,16 @@ def inspect_images_in_folder(input_path):
         print("❌ هیچ تصویری در پوشه موردنظر یافت نشد.")
         return
 
+    cv2.namedWindow(INSPECTOR_WIN_NAME, cv2.WINDOW_AUTOSIZE)
+
     total_images = len(image_paths)
     print(f"📂 تعداد {total_images} تصویر جهت پردازش یافت شد.\n")
 
     for idx, img_path in enumerate(image_paths, start=1):
-        frame = cv2.imread(img_path)
+        # تغییر اصلی: استفاده از تابع اختصاصی imread_unicode به جای cv2.imread
+        frame = imread_unicode(img_path)
         if frame is None:
-            print(f"⚠️ تصویر خوانده نشد: {img_path}")
+            print(f"⚠️ تصویر خوانده نشد (احتمالا فایل خراب یا نامعتبر است): {img_path}")
             continue
 
         file_name = os.path.basename(img_path)
@@ -137,7 +170,6 @@ def inspect_images_in_folder(input_path):
             break
 
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     default_dir = "C:/Users/win/Desktop/SunTrackerSplit/SunTracker-Refactor/Refactor/Images"
