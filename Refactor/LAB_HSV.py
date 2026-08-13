@@ -10,9 +10,7 @@ def imread_unicode(filepath, flags=cv2.IMREAD_COLOR):
     تابع جایگزین برای cv2.imread جهت پشتیبانی کامل از حروف فارسی و Unicode در مسیر فایل
     """
     try:
-        # خواندن فایل به‌صورت آرایه بایت‌های خام
         img_array = np.fromfile(filepath, dtype=np.uint8)
-        # دکود کردن بایت‌ها به تصویر OpenCV
         return cv2.imdecode(img_array, flags)
     except Exception as e:
         return None
@@ -35,7 +33,11 @@ def create_pixel_inspector_panel(r, g, b, h, s, v, l, a, b_lab, x, y):
     
     return panel
 
-def process_single_frame(frame, title_prefix=""):
+def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_radius=20):
+    """
+    blur_kernel_size: اندازه کرنیل فیلتر گوسی (حتماً باید عدد فرد باشد مانند 5, 9, 15, 21 و ...)
+    circle_radius: شعاع دایره‌ای که دور نقطه ماکزیمم کشیده می‌شود
+    """
     b_chan, g_chan, r_chan = cv2.split(frame)
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -44,6 +46,12 @@ def process_single_frame(frame, title_prefix=""):
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l_chan, a_chan, b_lab_chan = cv2.split(lab)
 
+    # --- اعمال فیلتر گوسی روی کانال L ---
+    # اطمینان از فرد بودن اندازه کرنل
+    if blur_kernel_size % 2 == 0:
+        blur_kernel_size += 1
+    l_chan_blurred = cv2.GaussianBlur(l_chan, (blur_kernel_size, blur_kernel_size), 0)
+
     channels = {
         "Red (R)": (r_chan, (0, 0, 255)),
         "Green (G)": (g_chan, (0, 255, 0)),
@@ -51,7 +59,7 @@ def process_single_frame(frame, title_prefix=""):
         "Hue (H)": (h_chan, (255, 100, 0)),
         "Sat (S)": (s_chan, (0, 255, 128)),
         "Val (V)": (v_chan, (128, 0, 255)),
-        "Light (L)": (l_chan, (255, 255, 0)),
+        "Light (L Blurred)": (l_chan_blurred, (255, 255, 0)),
         "a* (G-R)": (a_chan, (255, 0, 255)),
         "b* (B-Y)": (b_lab_chan, (0, 255, 255))
     }
@@ -80,8 +88,11 @@ def process_single_frame(frame, title_prefix=""):
         print(f"   ▫️ حداقل (Min): {int(min_val):3d}  در  X={min_loc[0]}, Y={min_loc[1]}")
         print(f"   ▫️ حداکثر (Max): {int(max_val):3d}  در  X={max_loc[0]}, Y={max_loc[1]}")
 
-        cv2.circle(marked_frame, min_loc, 2, color, -1)
-        cv2.circle(marked_frame, max_loc, 4, color, -1)
+        # رسم دایره فقط برای کانال L بلور شده
+        if name == "Light (L Blurred)":
+            # رسم دایره با شعاع سفارشی circle_radius
+            cv2.circle(marked_frame, max_loc, circle_radius, (0, 255, 255), 2)
+            cv2.circle(marked_frame, max_loc, 2, (0, 255, 255), -1)
 
         text_min = f"{name} Min: {int(min_val):3d} @ ({min_loc[0]},{min_loc[1]})"
         text_max = f"{name} Max: {int(max_val):3d} @ ({max_loc[0]},{max_loc[1]})"
@@ -131,7 +142,7 @@ def process_single_frame(frame, title_prefix=""):
 
     cv2.setMouseCallback(win_name, mouse_event)
 
-def inspect_images_in_folder(input_path):
+def inspect_images_in_folder(input_path, blur_kernel_size=15, circle_radius=25):
     valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')
 
     if os.path.isdir(input_path):
@@ -154,7 +165,6 @@ def inspect_images_in_folder(input_path):
     print(f"📂 تعداد {total_images} تصویر جهت پردازش یافت شد.\n")
 
     for idx, img_path in enumerate(image_paths, start=1):
-        # تغییر اصلی: استفاده از تابع اختصاصی imread_unicode به جای cv2.imread
         frame = imread_unicode(img_path)
         if frame is None:
             print(f"⚠️ تصویر خوانده نشد (احتمالا فایل خراب یا نامعتبر است): {img_path}")
@@ -162,7 +172,11 @@ def inspect_images_in_folder(input_path):
 
         file_name = os.path.basename(img_path)
         process_single_frame(
-            frame, title_prefix=f"{idx}/{total_images} - {file_name}")
+            frame, 
+            title_prefix=f"{idx}/{total_images} - {file_name}",
+            blur_kernel_size=blur_kernel_size,
+            circle_radius=circle_radius
+        )
 
         key = cv2.waitKey(0) & 0xFF
         if key == ord('q'):
@@ -174,4 +188,9 @@ def inspect_images_in_folder(input_path):
 if __name__ == "__main__":
     default_dir = "C:/Users/win/Desktop/SunTrackerSplit/SunTracker-Refactor/Refactor/Images"
     path = sys.argv[1] if len(sys.argv) > 1 else default_dir
-    inspect_images_in_folder(path)
+    
+    # تنظیمات سفارشی شما:
+    BLUR_KERNEL_SIZE = 15   # میزان بلور گوسی (عدد فرد بزرگتر = نویزگیری بیشتر)
+    CIRCLE_RADIUS = 30      # اندازه (شعاع) دایره به پیکسل
+    
+    inspect_images_in_folder(path, blur_kernel_size=BLUR_KERNEL_SIZE, circle_radius=CIRCLE_RADIUS)
