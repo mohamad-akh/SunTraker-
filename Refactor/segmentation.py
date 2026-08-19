@@ -20,7 +20,9 @@ else:
             continue
 
         # ۱. تغییر سایز
-        resized_img = cv2.resize(image, (640, 480))
+        # resized_img = cv2.resize(image, (640, 480))
+        resized_img = image
+
 
         # --- شروع اندازه‌گیری زمان پردازش ---
         start_time = time.perf_counter()
