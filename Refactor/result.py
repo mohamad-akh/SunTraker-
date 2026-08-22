@@ -410,7 +410,7 @@ def process_image(image_path):
         x1, y1, x2, y2 = create_roi(img.shape, max_point)
         roi_bgr = img[y1:y2, x1:x2]
         l_roi = blurred_l[y1:y2, x1:x2]
-        thresh_roi = heavy_threshold(l_roi)
+        thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
 
         return visualize_shakil(
             img,
@@ -435,7 +435,7 @@ def process_image(image_path):
     x1, y1, x2, y2 = create_roi(img.shape, max_point)
     l_roi = blurred_l[y1:y2, x1:x2]
     roi_bgr = img[y1:y2, x1:x2]
-    thresh_roi = heavy_threshold(l_roi)
+    thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
 
     # فعلاً الگوریتم Hough برای هر دو حالت کاملاً یکسان است.
     if cloud_status == "Dark Clouds":
