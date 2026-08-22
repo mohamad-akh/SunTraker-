@@ -15,8 +15,9 @@ def imread_unicode(filepath, flags=cv2.IMREAD_COLOR):
     except Exception as e:
         return None
 
-def create_pixel_inspector_panel(r, g, b, h, s, v, l, a, b_lab, x, y):
-    panel_w, panel_h = 400, 320
+def create_pixel_inspector_panel(r, g, b, h, s, v, l, a, b_lab, y_cb_cr, x, y):
+    # افزایش ارتفاع پنل برای جا دادن اطلاعات YCrCb
+    panel_w, panel_h = 400, 360
     panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
     
     color_preview = np.full((60, panel_w - 20, 3), (b, g, r), dtype=np.uint8)
@@ -26,18 +27,15 @@ def create_pixel_inspector_panel(r, g, b, h, s, v, l, a, b_lab, x, y):
     
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(panel, f"Position: X={x}, Y={y}", (15, 100), font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(panel, f"RGB:  R={r:3d}  G={g:3d}  B={b:3d}", (15, 140), font, 0.5, (100, 100, 255), 1, cv2.LINE_AA)
-    cv2.putText(panel, f"HSV:  H={h:3d}  S={s:3d}  V={v:3d}", (15, 180), font, 0.5, (255, 200, 100), 1, cv2.LINE_AA)
-    cv2.putText(panel, f"LAB:  L={l:3d}  a={a:3d}  b={b_lab:3d}", (15, 220), font, 0.5, (255, 100, 255), 1, cv2.LINE_AA)
-    cv2.putText(panel, "Move/Click mouse on main image", (15, 280), font, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"RGB:  R={r:3d}  G={g:3d}  B={b:3d}", (15, 135), font, 0.5, (100, 100, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"HSV:  H={h:3d}  S={s:3d}  V={v:3d}", (15, 170), font, 0.5, (255, 200, 100), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"LAB:  L={l:3d}  a={a:3d}  b={b_lab:3d}", (15, 205), font, 0.5, (255, 100, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, f"YCrCb: Y={y_cb_cr[0]:3d} Cr={y_cb_cr[1]:3d} Cb={y_cb_cr[2]:3d}", (15, 240), font, 0.5, (100, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(panel, "Move/Click mouse on main image", (15, 315), font, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
     
     return panel
 
 def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_radius=20):
-    """
-    blur_kernel_size: اندازه کرنیل فیلتر گوسی (حتماً باید عدد فرد باشد مانند 5, 9, 15, 21 و ...)
-    circle_radius: شعاع دایره‌ای که دور نقطه ماکزیمم کشیده می‌شود
-    """
     b_chan, g_chan, r_chan = cv2.split(frame)
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -46,8 +44,11 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l_chan, a_chan, b_lab_chan = cv2.split(lab)
 
+    # --- اضافه شدن تبدیل فضای رنگی YCrCb ---
+    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    y_chan, cr_chan, cb_chan = cv2.split(ycrcb)
+
     # --- اعمال فیلتر گوسی روی کانال L ---
-    # اطمینان از فرد بودن اندازه کرنل
     if blur_kernel_size % 2 == 0:
         blur_kernel_size += 1
     l_chan_blurred = cv2.GaussianBlur(l_chan, (blur_kernel_size, blur_kernel_size), 0)
@@ -61,7 +62,10 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
         "Val (V)": (v_chan, (128, 0, 255)),
         "Light (L Blurred)": (l_chan_blurred, (255, 255, 0)),
         "a* (G-R)": (a_chan, (255, 0, 255)),
-        "b* (B-Y)": (b_lab_chan, (0, 255, 255))
+        "b* (B-Y)": (b_lab_chan, (0, 255, 255)),
+        "Y (Luma)": (y_chan, (200, 200, 200)),
+        "Cr (Red-Diff)": (cr_chan, (100, 100, 255)),
+        "Cb (Blue-Diff)": (cb_chan, (255, 100, 100))
     }
 
     marked_frame = frame.copy()
@@ -88,9 +92,7 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
         print(f"   ▫️ حداقل (Min): {int(min_val):3d}  در  X={min_loc[0]}, Y={min_loc[1]}")
         print(f"   ▫️ حداکثر (Max): {int(max_val):3d}  در  X={max_loc[0]}, Y={max_loc[1]}")
 
-        # رسم دایره فقط برای کانال L بلور شده
         if name == "Light (L Blurred)":
-            # رسم دایره با شعاع سفارشی circle_radius
             cv2.circle(marked_frame, max_loc, circle_radius, (0, 255, 255), 2)
             cv2.circle(marked_frame, max_loc, 2, (0, 255, 255), -1)
 
@@ -118,6 +120,7 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
         r_val, g_val, b_val, 
         h_chan[init_y, init_x], s_chan[init_y, init_x], v_chan[init_y, init_x],
         l_chan[init_y, init_x], a_chan[init_y, init_x], b_lab_chan[init_y, init_x],
+        ycrcb[init_y, init_x],
         init_x, init_y
     )
     cv2.imshow(INSPECTOR_WIN_NAME, inspector_img)
@@ -128,9 +131,10 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
                 b_v, g_v, r_v = frame[y, x]
                 h_v, s_v, v_v = h_chan[y, x], s_chan[y, x], v_chan[y, x]
                 l_v, a_v, b_l_v = l_chan[y, x], a_chan[y, x], b_lab_chan[y, x]
+                y_cb_cr_val = ycrcb[y, x]
 
                 updated_inspector = create_pixel_inspector_panel(
-                    r_v, g_v, b_v, h_v, s_v, v_v, l_v, a_v, b_l_v, x, y
+                    r_v, g_v, b_v, h_v, s_v, v_v, l_v, a_v, b_l_v, y_cb_cr_val, x, y
                 )
                 cv2.imshow(INSPECTOR_WIN_NAME, updated_inspector)
 
@@ -138,7 +142,8 @@ def process_single_frame(frame, title_prefix="", blur_kernel_size=15, circle_rad
                     print(f"📍 کلیک در (X={x:4d}, Y={y:4d}) | "
                           f"RGB: ({r_v:3d}, {g_v:3d}, {b_v:3d}) | "
                           f"HSV: ({h_v:3d}, {s_v:3d}, {v_v:3d}) | "
-                          f"LAB: ({l_v:3d}, {a_v:3d}, {b_l_v:3d})")
+                          f"LAB: ({l_v:3d}, {a_v:3d}, {b_l_v:3d}) | "
+                          f"YCrCb: (Y={y_cb_cr_val[0]:3d}, Cr={y_cb_cr_val[1]:3d}, Cb={y_cb_cr_val[2]:3d})")
 
     cv2.setMouseCallback(win_name, mouse_event)
 
@@ -186,11 +191,10 @@ def inspect_images_in_folder(input_path, blur_kernel_size=15, circle_radius=25):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    default_dir = "C:/Users/win/Desktop/SunTrackerSplit/SunTracker-Refactor/Refactor/Images"
+    default_dir = "C:/Users/win/Desktop/Images"
     path = sys.argv[1] if len(sys.argv) > 1 else default_dir
     
-    # تنظیمات سفارشی شما:
-    BLUR_KERNEL_SIZE = 15   # میزان بلور گوسی (عدد فرد بزرگتر = نویزگیری بیشتر)
-    CIRCLE_RADIUS = 30      # اندازه (شعاع) دایره به پیکسل
+    BLUR_KERNEL_SIZE = 15   
+    CIRCLE_RADIUS = 30      
     
     inspect_images_in_folder(path, blur_kernel_size=BLUR_KERNEL_SIZE, circle_radius=CIRCLE_RADIUS)
