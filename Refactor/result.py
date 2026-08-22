@@ -138,7 +138,7 @@ def detect_hough_dark(thresh_roi):
     return circles
 
 
-def select_best_circle(circles, thresh_roi, l_roi):
+def select_best_circle(circles, thresh_roi, l_roi, detection_mode):
     if circles is None:
         return None
 
@@ -146,21 +146,42 @@ def select_best_circle(circles, thresh_roi, l_roi):
     best_circle, best_score = None, -1
 
     for circle in circles[0, :]:
-        cx, cy, r = circle[0], circle[1], circle[2]
+        cx, cy, r = int(circle[0]), int(circle[1]), int(circle[2])
         mask = np.zeros_like(thresh_roi, dtype=np.uint8)
         cv2.circle(mask, (cx, cy), r, 255, -1)
 
-        bright_pixels = cv2.bitwise_and(
-            thresh_roi, thresh_roi, mask=mask
+        bright_pixels = cv2.countNonZero(
+            cv2.bitwise_and(thresh_roi, thresh_roi, mask=mask)
         )
-        pixel_count = cv2.countNonZero(bright_pixels)
 
-        # Current scoring logic kept unchanged.
-        score = pixel_count * cv2.mean(l_roi, mask=mask)[0]
+        if detection_mode == "Dark Clouds Hough":
+            if bright_pixels == 0:
+                continue
 
-        if score > best_score:
-            best_score = score
-            best_circle = (cx, cy, r, score)
+            circle_area = np.pi * (r ** 2)
+            density = bright_pixels / circle_area
+            mean_l_inside = cv2.mean(l_roi, mask=mask)[0]
+
+            score = (
+                bright_pixels * density * 0.5
+            ) + (
+                mean_l_inside * 1.2
+            )
+
+            if score > 150.0 and score > best_score:
+                best_score = score
+                best_circle = (
+                    cx, cy, r, score
+                )
+        else:
+            pixel_count = bright_pixels
+
+            # Current scoring logic kept unchanged for White Clouds.
+            score = pixel_count * cv2.mean(l_roi, mask=mask)[0]
+
+            if score > best_score:
+                best_score = score
+                best_circle = (cx, cy, r, score)
 
     return best_circle
 
@@ -242,7 +263,6 @@ def visualize_shakil(
     )
     cv2.circle(annotated_img, max_pt, 8, (0, 0, 255), -1)
 
-    # نمایش mode انتخاب‌شده
     cv2.putText(
         annotated_img,
         f"Mode: {detection_mode}",
@@ -403,7 +423,6 @@ def process_image(image_path):
             f"Mode: Night | Brightness: {brightness:.1f}"
         )
 
-        # For night we still prepare the normal visualization inputs.
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel = lab[:, :, 0]
         max_point, blurred_l = find_brightest_point(l_channel)
@@ -437,7 +456,6 @@ def process_image(image_path):
     roi_bgr = img[y1:y2, x1:x2]
     thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
 
-    # فعلاً الگوریتم Hough برای هر دو حالت کاملاً یکسان است.
     if cloud_status == "Dark Clouds":
         detection_mode = "Dark Clouds Hough"
         circles = detect_hough_dark(thresh_roi)
@@ -446,7 +464,7 @@ def process_image(image_path):
         circles = detect_hough_white(thresh_roi)
 
     best_circle = select_best_circle(
-        circles, thresh_roi, l_roi
+        circles, thresh_roi, l_roi, detection_mode
     )
 
     elapsed_time = time.perf_counter() - start_time
