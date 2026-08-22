@@ -1,0 +1,281 @@
+import os
+import cv2
+import numpy as np
+import time
+
+# ==========================================
+# 0. Configurable Parameters (Algorithm)
+# ==========================================
+GAUSSIAN_KERNEL = (9, 9)
+DELTA_THRESHOLD = 4
+ROI_RATIO = 0.5  # Approx sqrt(1/8)
+
+# Hough Circle Parameters
+HOUGH_DP = 1.2
+HOUGH_MIN_DIST = 30
+HOUGH_PARAM1 = 80
+HOUGH_PARAM2 = 10
+HOUGH_MIN_RADIUS = 5
+HOUGH_MAX_RADIUS = 100
+
+# ==========================================
+# 0b. Configurable Parameters (UI/Display)
+# ==========================================
+WINDOW_NAME = "Sun Detection Pipeline - Modular View"
+# اندازه مانیتور خود را اینجا تنظیم کنید تا پنجره بهینه شود (یا دستی تغییر سایز دهید)
+MONITOR_WIDTH = 1920
+MONITOR_HEIGHT = 1080
+
+
+def find_brightest_point(l_channel):
+    blurred_l = cv2.GaussianBlur(l_channel, GAUSSIAN_KERNEL, 0)
+    _, _, _, max_loc = cv2.minMaxLoc(blurred_l)
+    return max_loc, blurred_l
+
+
+def create_roi(image_shape, max_point):
+    h, w = image_shape[:2]
+    x_max, y_max = max_point
+    roi_w = int(w * ROI_RATIO)
+    roi_h = int(h * ROI_RATIO)
+    x1 = max(0, x_max - roi_w // 2)
+    y1 = max(0, y_max - roi_h // 2)
+    x2 = min(w, x_max + roi_w // 2)
+    y2 = min(h, y_max + roi_h // 2)
+    return x1, y1, x2, y2
+
+
+def heavy_threshold(l_roi):
+    max_val = np.max(l_roi)
+    thresh_val = max(0, max_val - DELTA_THRESHOLD)
+    _, thresh_mask = cv2.threshold(l_roi, thresh_val, 255, cv2.THRESH_BINARY)
+    return thresh_mask
+
+
+def detect_hough_circles(thresh_roi):
+    circles = cv2.HoughCircles(
+        thresh_roi, cv2.HOUGH_GRADIENT,
+        dp=HOUGH_DP, minDist=HOUGH_MIN_DIST,
+        param1=HOUGH_PARAM1, param2=HOUGH_PARAM2,
+        minRadius=HOUGH_MIN_RADIUS, maxRadius=HOUGH_MAX_RADIUS
+    )
+    return circles
+
+
+def select_best_circle(circles, thresh_roi, l_roi):
+    if circles is None:
+        return None
+    circles = np.uint16(np.around(circles))
+    best_circle, best_score = None, -1
+    for circle in circles[0, :]:
+        cx, cy, r = circle[0], circle[1], circle[2]
+        mask = np.zeros_like(thresh_roi, dtype=np.uint8)
+        cv2.circle(mask, (cx, cy), r, 255, -1)
+        bright_pixels = cv2.bitwise_and(thresh_roi, thresh_roi, mask=mask)
+        pixel_count = cv2.countNonZero(bright_pixels)
+        # Simplified score for demo
+        score = pixel_count * cv2.mean(l_roi, mask=mask)[0]
+        if score > best_score:
+            best_score, best_circle = score, (cx, cy, r, score)
+    return best_circle
+
+# ==========================================
+# 1. Improved UI Helper Functions
+# ==========================================
+
+
+def resize_maintain_aspect(img, target_w, target_h, background_color=(0, 0, 0)):
+    """
+    تغییر اندازه تصویر با حفظ نسبت ابعاد و پر کردن فضاهای خالی با رنگ سیاه.
+    """
+    h, w = img.shape[:2]
+
+    # محاسبه نسبت ابعاد
+    img_aspect = w / h
+    target_aspect = target_w / target_h
+
+    if img_aspect > target_aspect:
+        # تصویر پهن‌تر است -> پهنا را فیت کن
+        new_w = target_w
+        new_h = int(target_w / img_aspect)
+    else:
+        # تصویر بلندتر است -> درازا را فیت کن
+        new_h = target_h
+        new_w = int(target_h * img_aspect)
+
+    # تغییر سایز با کیفیت بالا
+    resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # اگر تک کاناله (Gray) است به BGR تبدیل کن
+    if len(resized_img.shape) == 2:
+        resized_img = cv2.cvtColor(resized_img, cv2.COLOR_GRAY2BGR)
+
+    # ایجاد پس‌زمینه سیاه و چسباندن تصویر در مرکز
+    final_img = np.full((target_h, target_w, 3),
+                        background_color, dtype=np.uint8)
+    off_y = (target_h - new_h) // 2
+    off_x = (target_w - new_w) // 2
+    final_img[off_y:off_y+new_h, off_x:off_x+new_w] = resized_img
+
+    return final_img
+
+
+def add_clean_label(img, text, position=(15, 30), font_scale=0.7, color=(0, 255, 255)):
+    """اضافه کردن عنوان شکیل به تصویر با پس‌زمینه تیره برای خوانایی."""
+    res = img.copy()
+    # اضافه کردن یک مستطیل نیمه شفاف پشت متن
+    (text_w, text_h), _ = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)
+    cv2.rectangle(res, (position[0]-5, position[1]-text_h-5),
+                  (position[0]+text_w+5, position[1]+5), (0, 0, 0), -1)
+    # نوشتن متن
+    cv2.putText(res, text, position, cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale, color, 2, cv2.LINE_AA)
+    return res
+
+
+def visualize_shakil(img_bgr, l_chan, blurred_l, roi_bgr, thresh_roi, best_circle, roi_coords, max_pt, fps):
+    """نمایشگر نهایی: تصاویر را به صورت شکیل و با کیفیت در شبکه می‌چیند."""
+    x1, y1, x2, y2 = roi_coords
+    annotated_img = img_bgr.copy()
+
+    # علامت‌گذاری‌ها
+    cv2.rectangle(annotated_img, (x1, y1), (x2, y2),
+                  (255, 0, 0), 3)  # ROI Blue
+    cv2.circle(annotated_img, max_pt, 8, (0, 0, 255), -1)  # Max Red
+
+    roi_annotated = roi_bgr.copy()
+
+    if best_circle is not None:
+        cx_roi, cy_roi, r, _ = best_circle
+        cv2.circle(roi_annotated, (cx_roi, cy_roi),
+                   r, (0, 255, 0), 3)  # Circle Green
+        x_global, y_global = cx_roi + x1, cy_roi + y1
+        cv2.circle(annotated_img, (x_global, y_global), r, (0, 255, 0), 3)
+        cv2.circle(annotated_img, (x_global, y_global), 4, (0, 0, 255), -1)
+
+        txt = f"Sun: ({x_global}, {y_global}), R:{r}"
+        cv2.putText(annotated_img, txt, (x1, max(30, y1 - 15)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+    else:
+        cv2.putText(annotated_img, "No Sun Circle Detected", (x1, max(30, y1 - 15)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+
+    # ------------------------------------------
+    # چیدمان شبکه (Grid Layout)
+    # ------------------------------------------
+
+    # محاسبه اندازه بهینه هر سلول بر اساس مانیتور
+    # ما یک شبکه ۲x۳ (یا ۲x۴) می‌خواهیم. فرض کنیم ۲x۳ مناسب‌تر است.
+    Num_Cols = 3
+    Num_Rows = 2
+    cell_w = int((MONITOR_WIDTH * 0.9) / Num_Cols)
+    cell_h = int((MONITOR_HEIGHT * 0.8) / Num_Rows)
+
+    # آماده‌سازی و لیبل‌گذاری تصاویر با حفظ نسبت ابعاد
+    cells = []
+    cells.append(add_clean_label(resize_maintain_aspect(
+        img_bgr, cell_w, cell_h), "1. Original BGR"))
+    cells.append(add_clean_label(resize_maintain_aspect(
+        l_chan, cell_w, cell_h), "2. LAB - L Channel", color=(255, 200, 0)))
+    cells.append(add_clean_label(resize_maintain_aspect(
+        roi_bgr, cell_w, cell_h), "3. ROI (Zoomed Original)"))
+
+    cells.append(add_clean_label(resize_maintain_aspect(
+        thresh_roi, cell_w, cell_h), "4. Heavy Thresh Mask", color=(200, 200, 200)))
+    cells.append(add_clean_label(resize_maintain_aspect(
+        roi_annotated, cell_w, cell_h), "5. ROI with Hough Detect"))
+
+    # تصویر نهایی بزرگتر یا با FPS
+    final_cell = resize_maintain_aspect(annotated_img, cell_w, cell_h)
+    # درج FPS روی تصویر نهایی
+    (fps_w, fps_h), _ = cv2.getTextSize(
+        f"FPS: {fps:.1f}", cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)
+    cv2.putText(final_cell, f"FPS: {fps:.1f}", (cell_w - fps_w - 20, cell_h - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3, cv2.LINE_AA)
+    cells.append(add_clean_label(
+        final_cell, "6. Final Full View", color=(0, 255, 0)))
+
+    # ساختن ردیف‌ها
+    row1 = np.hstack(cells[0:3])
+    row2 = np.hstack(cells[3:6])
+
+    # چسباندن ردیف‌ها به صورت عمودی
+    grid = np.vstack([row1, row2])
+
+    # اضافه کردن حاشیه راهنما در پایین کل پنجره
+    help_bar = np.zeros((50, grid.shape[1], 3), dtype=np.uint8)
+    cv2.putText(help_bar, "Press [ANY KEY] for Next Image | Press [ESC] to Exit",
+                (int(grid.shape[1]/2) - 300, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+
+    final_display = np.vstack([grid, help_bar])
+
+    # نمایش در پنجره واحد
+    cv2.imshow(WINDOW_NAME, final_display)
+
+    # منتظر ماندن برای کلید
+    key = cv2.waitKey(0)
+    if key == 27:  # Esc
+        return False
+    return True
+
+# ==========================================
+# Main Processing Functions (Unchanged)
+# ==========================================
+
+
+def process_image(image_path):
+    img = cv2.imread(image_path)
+    if img is None:
+        print(f"Skipping invalid: {image_path}")
+        return True
+
+    start_time = time.perf_counter()
+
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0]
+    max_point, blurred_l = find_brightest_point(l_channel)
+    x1, y1, x2, y2 = create_roi(img.shape, max_point)
+    l_roi = blurred_l[y1:y2, x1:x2]
+    roi_bgr = img[y1:y2, x1:x2]
+    thresh_roi = heavy_threshold(l_roi)
+    circles = detect_hough_circles(thresh_roi)
+    best_circle = select_best_circle(circles, thresh_roi, l_roi)
+
+    elapsed_time = time.perf_counter() - start_time
+    fps = 1.0 / elapsed_time if elapsed_time > 0 else 0.0
+
+    # استفاده از تابع نمایشگر شکیل
+    continue_processing = visualize_shakil(
+        img, l_channel, blurred_l, roi_bgr, thresh_roi,
+        best_circle, (x1, y1, x2, y2), max_point, fps
+    )
+    return continue_processing
+
+
+def process_folder(folder_path):
+    if not os.path.exists(folder_path):
+        print("Folder not found.")
+        return
+
+    # تنظیمات پنجره واحد برای حفظ نسبت ابعاد کل شبکه
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    # تنظیم اندازه اولیه پنجره به ۹۰٪ مانیتور
+    cv2.resizeWindow(WINDOW_NAME, int(MONITOR_WIDTH * 0.9),
+                     int(MONITOR_HEIGHT * 0.9))
+
+    valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
+    for filename in os.listdir(folder_path):
+        if filename.lower().endswith(valid_exts):
+            img_path = os.path.join(folder_path, filename)
+            if not process_image(img_path):
+                break
+
+    cv2.destroyAllWindows()
+
+
+# ==========================================
+# Example Usage:
+# ==========================================
+# process_folder("./path_to_your_images")
+process_folder("C:/Users/win/Desktop/Output_Image")
