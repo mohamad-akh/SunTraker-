@@ -9,7 +9,7 @@ import time
 GAUSSIAN_KERNEL = (9, 9)
 DELTA_THRESHOLD = 4
 ROI_WIDTH_RATIO = 0.5
-ROI_HEIGHT_RATIO = 0.4
+ROI_HEIGHT_RATIO = 0.43
 
 # Hough Circle Parameters
 HOUGH_DP = 1.2
@@ -30,6 +30,15 @@ WINDOW_NAME = "Sun Detection Pipeline - Modular View"
 MONITOR_WIDTH = 1920
 MONITOR_HEIGHT = 1080
 
+#===========================================
+WHITE_BRIGHTNESS_RATIO = 0.98
+DARK_BRIGHTNESS_RATIO = 0.96
+
+DARK_OPEN_KERNEL = (5, 5)
+DARK_CLOSE_KERNEL = (11, 11)
+
+WHITE_OPEN_KERNEL = (5, 5)
+WHITE_CLOSE_KERNEL = (13, 13)
 
 # ==========================================
 # 1. Sky & Cloud Analysis
@@ -81,8 +90,8 @@ def analyze_sky_and_clouds(frame):
 
 def find_brightest_point(l_channel):
     blurred_l = cv2.GaussianBlur(l_channel, GAUSSIAN_KERNEL, 0)
-    _, _, _, max_loc = cv2.minMaxLoc(blurred_l)
-    return max_loc, blurred_l
+    _, max_val, _, max_loc = cv2.minMaxLoc(blurred_l)
+    return max_val, max_loc, blurred_l
 
 
 def create_roi(image_shape, max_point):
@@ -97,14 +106,84 @@ def create_roi(image_shape, max_point):
     return x1, y1, x2, y2
 
 
-def heavy_threshold(l_roi):
-    max_val = np.max(l_roi)
-    thresh_val = max(0, max_val - DELTA_THRESHOLD)
-    _, thresh_mask = cv2.threshold(
-        l_roi, thresh_val, 255, cv2.THRESH_BINARY
-    )
-    return thresh_mask
+def threshold_and_morphology(max_val, l_roi, mode):
 
+    # =========================
+    # Dark Clouds
+    # =========================
+    if mode == "dark":
+
+        thresh_val = int(max_val * DARK_BRIGHTNESS_RATIO)
+
+        _, mask = cv2.threshold(
+            l_roi,
+            thresh_val,
+            255,
+            cv2.THRESH_BINARY
+        )
+
+        open_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            DARK_OPEN_KERNEL
+        )
+
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            DARK_CLOSE_KERNEL
+        )
+
+        mask = cv2.morphologyEx(
+            mask,
+            cv2.MORPH_OPEN,
+            open_kernel
+        )
+
+        mask = cv2.morphologyEx(
+            mask,
+            cv2.MORPH_CLOSE,
+            close_kernel
+        )
+
+    # =========================
+    # White Clouds
+    # =========================
+    elif mode == "white":
+
+        thresh_val = int(max_val * WHITE_BRIGHTNESS_RATIO)
+
+        _, mask = cv2.threshold(
+            l_roi,
+            thresh_val,
+            255,
+            cv2.THRESH_BINARY
+        )
+
+        open_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            WHITE_OPEN_KERNEL
+        )
+
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            WHITE_CLOSE_KERNEL
+        )
+
+        mask = cv2.morphologyEx(
+            mask,
+            cv2.MORPH_OPEN,
+            open_kernel
+        )
+
+        mask = cv2.morphologyEx(
+            mask,
+            cv2.MORPH_CLOSE,
+            close_kernel
+        )
+
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    return mask
 
 # ==========================================
 # 2. Hough Detection
@@ -426,11 +505,12 @@ def process_image(image_path):
 
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel = lab[:, :, 0]
-        max_point, blurred_l = find_brightest_point(l_channel)
+        max_val, max_point, blurred_l = find_brightest_point(l_channel)
         x1, y1, x2, y2 = create_roi(img.shape, max_point)
         roi_bgr = img[y1:y2, x1:x2]
         l_roi = blurred_l[y1:y2, x1:x2]
-        thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
+        thresh_roi = l_channel[y1:y2, x1:x2]
+
 
         return visualize_shakil(
             img,
@@ -450,18 +530,25 @@ def process_image(image_path):
     # ------------------------------------------
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l_channel = lab[:, :, 0]
-    max_point, blurred_l = find_brightest_point(l_channel)
+    max_val, max_point, blurred_l = find_brightest_point(l_channel)
 
     x1, y1, x2, y2 = create_roi(img.shape, max_point)
     l_roi = blurred_l[y1:y2, x1:x2]
     roi_bgr = img[y1:y2, x1:x2]
-    thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
+    # thresh_roi = heavy_threshold(l_channel[y1:y2, x1:x2])
 
     if cloud_status == "Dark Clouds":
         detection_mode = "Dark Clouds Hough"
+        thresh_roi = threshold_and_morphology(max_val,
+        l_channel[y1:y2, x1:x2],
+        mode="dark")
+    
         circles = detect_hough_dark(thresh_roi)
     else:
         detection_mode = "White Clouds Hough"
+        thresh_roi = threshold_and_morphology(max_val,
+        l_channel[y1:y2, x1:x2],
+        mode="white" )
         circles = detect_hough_white(thresh_roi)
 
     best_circle = select_best_circle(
