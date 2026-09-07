@@ -8,7 +8,8 @@ import time
 # ==========================================
 GAUSSIAN_KERNEL = (9, 9)
 DELTA_THRESHOLD = 4
-ROI_RATIO = 0.5
+ROI_WIDTH_RATIO = 0.5
+ROI_HEIGHT_RATIO = 0.4
 
 # Hough Circle Parameters
 HOUGH_DP = 1.2
@@ -87,8 +88,8 @@ def find_brightest_point(l_channel):
 def create_roi(image_shape, max_point):
     h, w = image_shape[:2]
     x_max, y_max = max_point
-    roi_w = int(w * ROI_RATIO)
-    roi_h = int(h * ROI_RATIO)
+    roi_w = int(w * ROI_WIDTH_RATIO)
+    roi_h = int(h * ROI_HEIGHT_RATIO)
     x1 = max(0, x_max - roi_w // 2)
     y1 = max(0, y_max - roi_h // 2)
     x2 = min(w, x_max + roi_w // 2)
